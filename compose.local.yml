@@ -1,0 +1,17 @@
+# Host-supertonic mode: run only the UI, talking to a supertonic server already
+# running on this machine (e.g. the one your VS Code extension uses).
+#
+#   docker compose -f compose.local.yml up --build -d
+#
+# The UI container shares the host network, so it reaches a server bound to
+# 127.0.0.1. (On Docker Desktop for Mac/Windows the bundled docker-compose.yml
+# works with SUPERTONIC_ENDPOINT=http://host.docker.internal:7788 instead.)
+services:
+  ui:
+    build: .
+    network_mode: host # Linux; shares the host's loopback
+    environment:
+      SUPERTONIC_ENDPOINT: http://127.0.0.1:7788
+      SETTINGS_FILE: /data/settings.json
+    volumes:
+      - ./data:/data

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src blob:; img-src 'self' https: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self'" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Read Aloud</title>
+<style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url(/media/fonts/inter-latin-400-normal.woff2) format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:500;font-display:swap;src:url(/media/fonts/inter-latin-500-normal.woff2) format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url(/media/fonts/inter-latin-600-normal.woff2) format('woff2');}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url(/media/fonts/inter-latin-700-normal.woff2) format('woff2');}
+@font-face{font-family:'Literata';font-style:normal;font-weight:400;font-display:swap;src:url(/media/fonts/literata-latin-400-normal.woff2) format('woff2');}
+@font-face{font-family:'Literata';font-style:italic;font-weight:400;font-display:swap;src:url(/media/fonts/literata-latin-400-italic.woff2) format('woff2');}
+@font-face{font-family:'Literata';font-style:normal;font-weight:600;font-display:swap;src:url(/media/fonts/literata-latin-600-normal.woff2) format('woff2');}
+@font-face{font-family:'Literata';font-style:normal;font-weight:700;font-display:swap;src:url(/media/fonts/literata-latin-700-normal.woff2) format('woff2');}
+@font-face{font-family:'Atkinson Hyperlegible';font-style:normal;font-weight:400;font-display:swap;src:url(/media/fonts/atkinson-hyperlegible-latin-400-normal.woff2) format('woff2');}
+@font-face{font-family:'Atkinson Hyperlegible';font-style:italic;font-weight:400;font-display:swap;src:url(/media/fonts/atkinson-hyperlegible-latin-400-italic.woff2) format('woff2');}
+@font-face{font-family:'Atkinson Hyperlegible';font-style:normal;font-weight:700;font-display:swap;src:url(/media/fonts/atkinson-hyperlegible-latin-700-normal.woff2) format('woff2');}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:400;font-display:swap;src:url(/media/fonts/ibm-plex-mono-latin-400-normal.woff2) format('woff2');}
+@font-face{font-family:'IBM Plex Mono';font-style:normal;font-weight:500;font-display:swap;src:url(/media/fonts/ibm-plex-mono-latin-500-normal.woff2) format('woff2');}
+/* app overlays (paste modal, settings, error banner) */
+.raloud-fab{position:fixed;right:16px;bottom:16px;z-index:9999;border:1px solid rgba(128,128,128,.45);border-radius:999px;padding:8px 16px;font:500 14px Inter,system-ui,sans-serif;background:Canvas;color:CanvasText;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.18);}
+.raloud-fab:hover{border-color:Highlight;}
+.raloud-ov{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;}
+.raloud-ov[hidden]{display:none;}
+.raloud-card{background:Canvas;color:CanvasText;border-radius:12px;padding:20px;width:min(720px,92vw);max-height:88vh;overflow:auto;box-shadow:0 8px 40px rgba(0,0,0,.35);font:14px/1.5 Inter,system-ui,sans-serif;}
+.raloud-card h2{margin:0 0 12px;font-size:16px;}
+.raloud-card textarea{width:100%;box-sizing:border-box;min-height:300px;resize:vertical;font:13px/1.5 'IBM Plex Mono',monospace;padding:10px;border:1px solid rgba(128,128,128,.5);border-radius:8px;background:Canvas;color:CanvasText;}
+.raloud-card label{display:block;margin:12px 0 4px;font-weight:600;}
+.raloud-card input[type=text],.raloud-card select{width:100%;box-sizing:border-box;padding:8px;border:1px solid rgba(128,128,128,.5);border-radius:8px;background:Canvas;color:CanvasText;font:13px Inter,system-ui,sans-serif;}
+.raloud-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.raloud-card button{padding:8px 14px;border-radius:8px;border:1px solid rgba(128,128,128,.5);background:Canvas;color:CanvasText;font:600 13px Inter,system-ui,sans-serif;cursor:pointer;}
+.raloud-card button.primary{background:Highlight;color:HighlightText;border-color:transparent;}
+.raloud-card .err{color:#c0392b;margin:8px 0 0;min-height:1em;white-space:pre-wrap;}
+.raloud-banner{position:fixed;top:12px;right:12px;z-index:10001;max-width:440px;background:#b3261e;color:#fff;border-radius:10px;padding:12px 14px;font:13px/1.45 Inter,system-ui,sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.35);}
+.raloud-banner[hidden]{display:none;}
+.raloud-banner button{margin:8px 6px 0 0;padding:4px 10px;border-radius:6px;border:none;cursor:pointer;font:600 12px Inter,sans-serif;}
+.raloud-hint{opacity:.7;font-size:12px;margin-top:8px;}
+</style>
+<link href="/media/reader.css" rel="stylesheet" />
+</head>
+<body class="hide-badges">
+  <div id="app"></div>
+  <div id="sr" class="sr-only" role="status" aria-live="polite"></div>
+  <script>
+    // acquireVsCodeApi shim — must exist before reader.js evaluates. Messages the
+    // reader sends before app.js loads (only the initial 'ready') are dropped.
+    window.__hostRoute = null;
+    window.__shimState = {};
+    window.acquireVsCodeApi = () => ({
+      postMessage: (m) => { if (window.__hostRoute) window.__hostRoute(m); },
+      getState: () => window.__shimState,
+      setState: (s) => { window.__shimState = Object.assign({}, window.__shimState, s); return window.__shimState; },
+    });
+    window.__uiLocale = 'en';
+  </script>
+  <script src="/media/sentenceBreaks.js"></script>
+  <script src="/media/reader.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+services:
+  supertonic:
+    build:
+      context: .
+      dockerfile: supertonic.Dockerfile
+    ports:
+      - "127.0.0.1:7788:7788" # also reachable from the host's VS Code extension
+    volumes:
+      - supertonic-cache:/root/.cache # model files (~260 MB), downloaded once
+
+  ui:
+    build: .
+    ports:
+      - "127.0.0.1:7789:7789"
+    environment:
+      # default: the bundled supertonic service above.
+      # to use a supertonic server on the host instead, set in .env:
+      #   SUPERTONIC_ENDPOINT=http://host.docker.internal:7788
+      SUPERTONIC_ENDPOINT: ${SUPERTONIC_ENDPOINT:-http://supertonic:7788}
+      SETTINGS_FILE: /data/settings.json
+    volumes:
+      - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # no-op in bundled mode
+
+volumes:
+  supertonic-cache:
