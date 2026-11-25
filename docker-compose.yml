@@ -18,6 +18,7 @@ services:
       #   SUPERTONIC_ENDPOINT=http://host.docker.internal:7788
       SUPERTONIC_ENDPOINT: ${SUPERTONIC_ENDPOINT:-http://supertonic:7788}
       SETTINGS_FILE: /data/settings.json
+      LIBRARY_DIR: /data/library
     volumes:
       - ./data:/data
     extra_hosts:

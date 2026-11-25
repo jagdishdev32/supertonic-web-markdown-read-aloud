@@ -45,7 +45,9 @@ google-chrome --app=http://127.0.0.1:7789   # or chromium --app=…
 ## Use
 
 - Paste box opens on start (✎ button or Ctrl+Shift+V) → paste Markdown →
-  **Render & read**.
+  **Render & read**. Every document is saved to the **library** (plain `.md`
+  files in `data/library/`); the ✎ modal lists recent documents — click to
+  reopen, × to remove. Re-pasting identical text reuses the same entry.
 - Right-click ✎ (or Ctrl+,) → app settings: engine (Supertonic / Edge /
   system voices), Supertonic endpoint, voice overrides.
 - Supertonic voice styles are `F1–F5` / `M1–M5`, e.g. `{"de-DE": "F2"}`;
@@ -71,7 +73,9 @@ google-chrome --app=http://127.0.0.1:7789   # or chromium --app=…
 - `supertonic-server-requirements.lock.txt` — pinned Python deps for the
   Supertonic server image (supertonic 1.3.1)
 - Settings persist in `settings.json` (bare) or `data/settings.json` (Docker);
-  point `SUPERTONIC_ENDPOINT` at any loopback server via env
+  the document library lives next to it (`library/` / `data/library/`) as one
+  readable `.md` file per document plus an `index.json`; point
+  `SUPERTONIC_ENDPOINT` at any loopback server via env
 
 ## Not available (yet)
 

@@ -13,5 +13,6 @@ services:
     environment:
       SUPERTONIC_ENDPOINT: http://127.0.0.1:7788
       SETTINGS_FILE: /data/settings.json
+      LIBRARY_DIR: /data/library
     volumes:
       - ./data:/data

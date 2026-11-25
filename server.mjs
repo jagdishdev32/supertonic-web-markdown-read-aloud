@@ -10,6 +10,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as host from './host.cjs';
 
@@ -17,6 +18,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MEDIA = path.join(HERE, 'media');
 const PUBLIC = path.join(HERE, 'public');
 const SETTINGS_FILE = process.env.SETTINGS_FILE || path.join(HERE, 'settings.json');
+const LIBRARY_DIR = process.env.LIBRARY_DIR || path.join(HERE, 'library');
+const LIBRARY_INDEX = path.join(LIBRARY_DIR, 'index.json');
 const PORT = Number(process.env.PORT) || 7789;
 // 0.0.0.0 inside containers (via HOST env), loopback only when run bare.
 const HOST = process.env.HOST || '127.0.0.1';
@@ -280,6 +283,61 @@ function sentenceGapMs() {
   return Math.round(gap * mult);
 }
 
+// ---- document library: one .md file per pasted document + a JSON index ----
+
+let libraryIndex = { docs: [] };
+try {
+  libraryIndex = { docs: JSON.parse(fs.readFileSync(LIBRARY_INDEX, 'utf8')).docs ?? [] };
+} catch {
+  /* empty library */
+}
+const saveLibraryIndex = () => {
+  fs.mkdirSync(LIBRARY_DIR, { recursive: true });
+  fs.writeFileSync(LIBRARY_INDEX, JSON.stringify(libraryIndex, null, 2));
+};
+
+/** Title for the list/filename: first heading, else first non-blank line. */
+function deriveTitle(source) {
+  const line =
+    /^#{1,6}\s+(.+)$/m.exec(source)?.[1] ??
+    source.split('\n').find((l) => l.trim())?.replace(/[#>*_`~\[\]]/g, '').trim() ??
+    '';
+  return (line || 'Pasted ' + new Date().toISOString().slice(0, 10)).slice(0, 80).trim();
+}
+
+/** Save a document (content-addressed: re-pasting the same text updates its timestamp). */
+function libraryAdd(source) {
+  const id = crypto.createHash('sha1').update(source).digest('hex').slice(0, 12);
+  const now = new Date().toISOString();
+  let doc = libraryIndex.docs.find((d) => d.id === id);
+  if (doc) {
+    doc.openedAt = now;
+    libraryIndex.docs = [doc, ...libraryIndex.docs.filter((d) => d !== doc)];
+  } else {
+    const title = deriveTitle(source);
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'doc';
+    doc = { id, file: `${slug}-${id}.md`, title, addedAt: now, openedAt: now };
+    fs.mkdirSync(LIBRARY_DIR, { recursive: true });
+    fs.writeFileSync(path.join(LIBRARY_DIR, doc.file), source);
+    libraryIndex.docs.unshift(doc);
+  }
+  saveLibraryIndex();
+  return doc;
+}
+
+function libraryGet(id) {
+  if (!/^[0-9a-f]{12}$/.test(id)) return undefined;
+  const doc = libraryIndex.docs.find((d) => d.id === id);
+  if (!doc) return undefined;
+  const file = path.join(LIBRARY_DIR, doc.file);
+  if (!file.startsWith(LIBRARY_DIR + path.sep)) return undefined;
+  try {
+    return { doc, source: fs.readFileSync(file, 'utf8') };
+  } catch {
+    return undefined;
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://${HOST}:${PORT}`);
   try {
@@ -294,6 +352,44 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && (u.pathname === '/app.js' || u.pathname === '/app.css')) {
       return serveFile(res, path.join(PUBLIC, u.pathname.slice(1)));
+    }
+
+    if (req.method === 'GET' && u.pathname === '/api/library') {
+      return json(res, 200, { docs: libraryIndex.docs });
+    }
+
+    if (req.method === 'POST' && u.pathname === '/api/library') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const source = String(body.source ?? '');
+      if (!source.trim()) return json(res, 422, { message: 'empty document' });
+      return json(res, 200, { doc: libraryAdd(source) });
+    }
+
+    if (req.method === 'POST' && u.pathname === '/api/library/open') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const hit = libraryGet(String(body.id ?? ''));
+      if (!hit) return json(res, 404, { message: 'document not found' });
+      // opening = the render path plus remembering it as the current document
+      settings.currentSource = hit.source;
+      save();
+      const locale = host.detectLocale(hit.source, settings.fallbackLocale).locale;
+      activeLocale = locale;
+      return json(res, 200, {
+        html: host.renderMarkdownHtml(hit.source),
+        locale,
+        title: hit.doc.title,
+        source: hit.source,
+      });
+    }
+
+    if (req.method === 'DELETE' && u.pathname.startsWith('/api/library/')) {
+      const id = u.pathname.slice('/api/library/'.length);
+      const hit = libraryGet(id);
+      if (!hit) return json(res, 404, { message: 'document not found' });
+      fs.rmSync(path.join(LIBRARY_DIR, hit.doc.file), { force: true });
+      libraryIndex.docs = libraryIndex.docs.filter((d) => d.id !== id);
+      saveLibraryIndex();
+      return json(res, 200, { ok: true });
     }
 
     if (req.method === 'GET' && u.pathname === '/api/state') {

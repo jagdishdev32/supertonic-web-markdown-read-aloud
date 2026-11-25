@@ -26,6 +26,7 @@
   editor.innerHTML = `
     <div class="raloud-card">
       <h2>Paste markdown to read aloud</h2>
+      <div id="raloud-recent"></div>
       <textarea id="raloud-src" spellcheck="false" placeholder="Paste markdown here…"></textarea>
       <div class="raloud-row" style="margin-top:12px">
         <button id="raloud-clip" type="button">Paste from clipboard</button>
@@ -239,9 +240,51 @@
   }
 
   // ---- editor + settings modals --------------------------------------------
+  async function renderRecent() {
+    const box = $('raloud-recent');
+    try {
+      const { docs } = await fetch('/api/library').then((r) => r.json());
+      if (!docs.length) {
+        box.innerHTML = '';
+        return;
+      }
+      box.innerHTML = '<h3>Recent documents</h3><ul>' +
+        docs.map((d) => `
+          <li>
+            <span class="t" data-id="${d.id}" title="${d.title.replace(/"/g, '&quot;')}">${d.title}</span>
+            <span class="d">${new Date(d.openedAt).toLocaleDateString()}</span>
+            <button class="x" data-del="${d.id}" title="Remove from library">×</button>
+          </li>`).join('') + '</ul>';
+      box.querySelectorAll('.t').forEach((el) =>
+        (el.onclick = async () => {
+          const res = await fetch('/api/library/open', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id: el.dataset.id }),
+          });
+          const body = await res.json();
+          if (!res.ok) return showBanner(body.message || 'could not open document');
+          st.settings.currentSource = body.source;
+          docLocale = body.locale;
+          editor.hidden = true;
+          hideBanner();
+          dispatch(buildLoad(body));
+        }));
+      box.querySelectorAll('[data-del]').forEach((el) =>
+        (el.onclick = async (e) => {
+          e.stopPropagation();
+          await fetch('/api/library/' + el.dataset.del, { method: 'DELETE' });
+          renderRecent();
+        }));
+    } catch {
+      box.innerHTML = '';
+    }
+  }
+
   function openEditor() {
     $('raloud-src').value = st.settings.currentSource || '';
     $('raloud-err').textContent = '';
+    renderRecent();
     editor.hidden = false;
     $('raloud-src').focus();
   }
@@ -266,6 +309,8 @@
       const [rendered] = await Promise.all([
         fetch('/api/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source }) }).then((r) => r.json().then((b) => ({ ok: r.ok, b }))),
         postSettings({ currentSource: source }).catch(() => undefined),
+        // save to the library (best-effort; the list refreshes on next open)
+        fetch('/api/library', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source }) }).catch(() => undefined),
       ]);
       if (!rendered.ok) throw new Error(rendered.b.message || 'render failed');
       docLocale = rendered.b.locale;
