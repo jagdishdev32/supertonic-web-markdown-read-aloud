@@ -15,6 +15,14 @@
   fab.title = 'Paste or edit the markdown (Ctrl+Shift+V)';
   document.body.appendChild(fab);
 
+  const gear = document.createElement('button');
+  gear.className = 'raloud-fab';
+  gear.style.bottom = '64px';
+  gear.textContent = '⚙ App settings';
+  gear.title = 'Engine, pauses, voice overrides (Ctrl+,)';
+  gear.onclick = openSettings;
+  document.body.appendChild(gear);
+
   const banner = document.createElement('div');
   banner.className = 'raloud-banner';
   banner.hidden = true;
@@ -36,6 +44,7 @@
         <button id="raloud-new" type="button" title="Start a new document">New</button>
         <button id="raloud-clip" type="button">Paste from clipboard</button>
         <span style="flex:1"></span>
+        <button id="raloud-appsettings" type="button" class="raloud-linkbtn">⚙ App settings</button>
         <button id="raloud-cancel" type="button">Cancel</button>
         <button id="raloud-save" type="button">Save</button>
         <button id="raloud-go" type="button" class="primary">Render &amp; read</button>
@@ -438,6 +447,8 @@
     $('raloud-src').focus();
   }
   fab.onclick = openEditor;
+
+  $('raloud-appsettings').onclick = openSettings;
 
   $('raloud-cancel').onclick = () => { editor.hidden = true; };
   $('raloud-clip').onclick = async () => {
