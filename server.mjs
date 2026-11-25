@@ -241,7 +241,13 @@ const MIME = {
 function serveFile(res, file) {
   fs.readFile(file, (err, data) => {
     if (err) return json(res, 404, { message: 'not found' });
-    res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'content-length': data.length });
+    // local server, tiny files: never let the browser pin a stale UI over a
+    // rebuilt container (no-store, not no-cache — there are no validators)
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file)] || 'application/octet-stream',
+      'content-length': data.length,
+      'cache-control': 'no-store',
+    });
     res.end(data);
   });
 }
