@@ -32,6 +32,7 @@ const DEFAULTS = {
   fallbackLocale: FALLBACK_LOCALE,
   rate: 1,
   volume: 1,
+  smartPauses: false, // sentence gaps scaled by 1/sqrt(speed) — Supertonic WAV only
   voiceOverrides: {},
   pronunciations: {},
   readerSettings: { codeBlocks: 'announce', tables: 'skip', announceHeadings: false, highlight: true },
@@ -54,6 +55,10 @@ const save = () => fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null
 // detected document language on open, changed by the reader's language picker.
 let activeLocale = settings.locale || FALLBACK_LOCALE;
 
+/** The standalone app trusts the user's configured endpoint (compose service,
+ *  LAN box) — the engine's loopback default is relaxed here, guards stay. */
+const ENGINE_OPTS = { allowNonLoopback: true };
+
 let supertonic = null;
 let edge = null;
 
@@ -63,7 +68,7 @@ function getEngine() {
   if (settings.engine === 'supertonic') {
     if (!supertonic || supertonic.endpoint !== settings.supertonicEndpoint) {
       supertonic?.dispose();
-      supertonic = new host.SupertonicHttpEngine({ endpoint: settings.supertonicEndpoint });
+      supertonic = new host.SupertonicHttpEngine({ endpoint: settings.supertonicEndpoint, ...ENGINE_OPTS });
       supertonic.endpoint = settings.supertonicEndpoint;
     }
     return supertonic;
@@ -124,6 +129,7 @@ function snapshot() {
       autoLang: settings.autoLang,
       rate: settings.rate,
       volume: settings.volume,
+      smartPauses: settings.smartPauses,
       voiceOverrides: settings.voiceOverrides,
       readerSettings: settings.readerSettings,
       readerPrefs: settings.readerPrefs,
@@ -166,7 +172,7 @@ function applySettings(patch) {
   }
   if (patch.supertonicEndpoint !== undefined) {
     try {
-      new host.SupertonicHttpEngine({ endpoint: String(patch.supertonicEndpoint) }).dispose(); // validates loopback http
+      new host.SupertonicHttpEngine({ endpoint: String(patch.supertonicEndpoint), ...ENGINE_OPTS }).dispose(); // validate
     } catch (err) {
       return String(err?.message || err);
     }
@@ -179,6 +185,7 @@ function applySettings(patch) {
   if (patch.locale !== undefined && typeof patch.locale === 'string' && patch.locale) activeLocale = patch.locale;
   if (patch.rate !== undefined && Number.isFinite(patch.rate)) settings.rate = Math.min(2.5, Math.max(0.5, patch.rate));
   if (patch.volume !== undefined && Number.isFinite(patch.volume)) settings.volume = Math.min(1, Math.max(0, patch.volume));
+  if (patch.smartPauses !== undefined) settings.smartPauses = !!patch.smartPauses;
   if (patch.readerSettings !== undefined && typeof patch.readerSettings === 'object') {
     settings.readerSettings = { ...settings.readerSettings, ...patch.readerSettings };
   }
@@ -212,6 +219,35 @@ function serveFile(res, file) {
     res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', 'content-length': data.length });
     res.end(data);
   });
+}
+
+/** Append `ms` of silence to a RIFF/WAVE buffer (walks chunks; fixes sizes). */
+function appendWavSilence(buf, ms) {
+  if (ms <= 0 || buf.length < 12 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return buf;
+  let pos = 12;
+  let dataAt = -1;
+  let dataSize = 0;
+  let byteRate = 0;
+  let blockAlign = 0;
+  while (pos + 8 <= buf.length) {
+    const id = buf.toString('ascii', pos, pos + 4);
+    const size = buf.readUInt32LE(pos + 4);
+    if (id === 'data') {
+      dataAt = pos;
+      dataSize = size;
+    }
+    if (id === 'fmt ') {
+      byteRate = buf.readUInt32LE(pos + 16);
+      blockAlign = buf.readUInt16LE(pos + 20);
+    }
+    pos += 8 + size + (size % 2); // chunks are word-aligned
+  }
+  if (dataAt < 0 || !byteRate || !blockAlign) return buf;
+  const silence = Buffer.alloc(Math.round((byteRate * ms) / 1000) - (Math.round((byteRate * ms) / 1000) % blockAlign));
+  const out = Buffer.concat([buf, silence]);
+  out.writeUInt32LE(dataSize + silence.length, dataAt + 4);
+  out.writeUInt32LE(out.length - 8, 4);
+  return out;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -269,7 +305,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, 413, { message: `input exceeds ${host.SUPERTONIC_MAX_INPUT_LENGTH} characters` });
       }
       try {
-        const buf = await engine.synth(clean, voice, locale);
+        let buf = await engine.synth(clean, voice, locale);
+        if (settings.engine === 'supertonic' && settings.smartPauses) {
+          // Listening-ergonomics rule: sentence gaps scale by 1/sqrt(speed), not
+          // 1/speed — fast speech stays intelligible only if pauses survive.
+          // Base 350 ms + the model's own trailing silence ≈ the ~600 ms
+          // sentence-end target at 1×. Edge clips are mp3 — skipped there.
+          buf = appendWavSilence(buf, 350 / Math.sqrt(settings.rate));
+        }
         console.log(`[synth] ${settings.engine} ${locale} ${voice} ${clean.length} chars → ${buf.length} bytes`);
         res.writeHead(200, {
           'content-type': engine.mime,

@@ -52,6 +52,11 @@
       <label>Voice overrides (JSON, per language)</label>
       <textarea id="raloud-overrides" style="min-height:110px" spellcheck="false"></textarea>
       <div class="raloud-hint">Edge voices: {"de-DE":"de-DE-KatjaNeural"} · Supertonic styles: {"de-DE":"F2"} (F1–F5 / M1–M5)</div>
+      <label style="font-weight:400;display:flex;gap:8px;align-items:center;margin-top:12px">
+        <input type="checkbox" id="raloud-smartpauses" />
+        Smart pauses between sentences (Supertonic)
+      </label>
+      <div class="raloud-hint">Adds a sentence gap scaled by 1/√speed — ~350 ms at 1×, ~250 ms at 2×, ~220 ms at 2.5× — so speeding up doesn't squash the pauses that keep fast speech intelligible.</div>
       <div class="raloud-row" style="margin-top:14px">
         <span style="flex:1"></span>
         <button id="raloud-conf-cancel" type="button">Cancel</button>
@@ -278,6 +283,7 @@
       .join('');
     $('raloud-endpoint').value = st.settings.supertonicEndpoint;
     $('raloud-overrides').value = JSON.stringify(st.settings.voiceOverrides || {}, null, 2);
+    $('raloud-smartpauses').checked = !!st.settings.smartPauses;
     $('raloud-conf-err').textContent = '';
     conf.hidden = false;
   }
@@ -300,6 +306,7 @@
       engine: (conf.querySelector('input[name=raloud-engine]:checked') || {}).value,
       supertonicEndpoint: $('raloud-endpoint').value.trim(),
       voiceOverrides: overrides,
+      smartPauses: $('raloud-smartpauses').checked,
     };
     $('raloud-conf-save').disabled = true;
     try {

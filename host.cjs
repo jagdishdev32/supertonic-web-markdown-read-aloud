@@ -41598,19 +41598,19 @@ function supertonicLang(locale) {
   const code4 = m ? m[0].toLowerCase() : "";
   return SUPERTONIC_LANGS.has(code4) ? code4 : "na";
 }
-function parseEndpoint(endpoint) {
+function parseEndpoint(endpoint, allowNonLoopback = false) {
   let url;
   try {
     url = new URL(endpoint);
   } catch {
     throw new Error("Supertonic endpoint is not a valid URL");
   }
-  if (url.protocol !== "http:") throw new Error("Supertonic endpoint must use plain http on loopback");
+  if (url.protocol !== "http:") throw new Error("Supertonic endpoint must use plain http");
   if (url.username || url.password) throw new Error("Supertonic endpoint must not contain credentials");
   if (url.pathname !== "/" && url.pathname !== "") throw new Error("Supertonic endpoint must not contain a path");
   if (url.search || url.hash) throw new Error("Supertonic endpoint must not contain a query or fragment");
   const host = url.hostname.replace(/^\[|\]$/g, "");
-  if (host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
+  if (!allowNonLoopback && host !== "127.0.0.1" && host !== "localhost" && host !== "::1") {
     throw new Error("Supertonic endpoint must be a loopback address (127.0.0.1, localhost, or ::1)");
   }
   const port = url.port ? Number(url.port) : 80;
@@ -41632,7 +41632,7 @@ var SupertonicHttpEngine = class {
   maxResponseBytes;
   tail = Promise.resolve();
   constructor(options = {}) {
-    const { host, port } = parseEndpoint(options.endpoint ?? SUPERTONIC_DEFAULT_ENDPOINT);
+    const { host, port } = parseEndpoint(options.endpoint ?? SUPERTONIC_DEFAULT_ENDPOINT, options.allowNonLoopback);
     this.host = host;
     this.port = port;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT;

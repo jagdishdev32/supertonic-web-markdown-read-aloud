@@ -51,6 +51,9 @@ google-chrome --app=http://127.0.0.1:7789   # or chromium --app=…
 - Supertonic voice styles are `F1–F5` / `M1–M5`, e.g. `{"de-DE": "F2"}`;
   Edge names in the same map are ignored in Supertonic mode and vice versa.
 - Speed, volume, gender, language live in the reader UI itself.
+- **Smart pauses** (app settings): appends a sentence gap scaled by 1/√speed —
+  ~350 ms at 1×, ~250 ms at 2× — so faster speed doesn't squash the pauses that
+  keep fast speech intelligible. Supertonic (WAV) only.
 
 ## Layout
 

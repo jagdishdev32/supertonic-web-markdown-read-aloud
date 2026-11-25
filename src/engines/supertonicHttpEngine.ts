@@ -56,8 +56,10 @@ export function supertonicLang(locale: string): string {
 }
 
 export interface SupertonicOptions {
-  /** Loopback-only base URL; anything non-loopback is rejected at construction. */
+  /** Plain-http origin; non-loopback requires allowNonLoopback (see parseEndpoint). */
   endpoint?: string;
+  /** Accept non-loopback endpoints (standalone app / Docker deployments). */
+  allowNonLoopback?: boolean;
   connectTimeoutMs?: number;
   totalTimeoutMs?: number;
   maxResponseBytes?: number;
@@ -67,20 +69,29 @@ export interface SupertonicOptions {
  * Parse and validate the endpoint. This is a privacy boundary, not just input
  * hygiene: Supertonic mode promises document text never leaves the machine, so
  * only plain-http loopback origins with no credentials and no path are allowed.
+ *
+ * `allowNonLoopback` relaxes only the loopback rule (standalone app / Docker,
+ * where the user explicitly points at e.g. the `supertonic` compose service or
+ * a LAN box). Scheme, credentials, path and redirect guards stay.
  */
-function parseEndpoint(endpoint: string): { host: string; port: number } {
+function parseEndpoint(endpoint: string, allowNonLoopback = false): { host: string; port: number } {
   let url: URL;
   try {
     url = new URL(endpoint);
   } catch {
     throw new Error('Supertonic endpoint is not a valid URL');
   }
-  if (url.protocol !== 'http:') throw new Error('Supertonic endpoint must use plain http on loopback');
+  if (url.protocol !== 'http:') throw new Error('Supertonic endpoint must use plain http');
   if (url.username || url.password) throw new Error('Supertonic endpoint must not contain credentials');
   if (url.pathname !== '/' && url.pathname !== '') throw new Error('Supertonic endpoint must not contain a path');
   if (url.search || url.hash) throw new Error('Supertonic endpoint must not contain a query or fragment');
   const host = url.hostname.replace(/^\[|\]$/g, ''); // URL keeps IPv6 brackets; node:http wants them off
-  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+  if (
+    !allowNonLoopback &&
+    host !== '127.0.0.1' &&
+    host !== 'localhost' &&
+    host !== '::1'
+  ) {
     throw new Error('Supertonic endpoint must be a loopback address (127.0.0.1, localhost, or ::1)');
   }
   const port = url.port ? Number(url.port) : 80;
@@ -127,7 +138,7 @@ export class SupertonicHttpEngine implements TtsEngine {
   private tail: Promise<unknown> = Promise.resolve();
 
   constructor(options: SupertonicOptions = {}) {
-    const { host, port } = parseEndpoint(options.endpoint ?? SUPERTONIC_DEFAULT_ENDPOINT);
+    const { host, port } = parseEndpoint(options.endpoint ?? SUPERTONIC_DEFAULT_ENDPOINT, options.allowNonLoopback);
     this.host = host;
     this.port = port;
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT;
