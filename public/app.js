@@ -27,6 +27,9 @@
     <div class="raloud-card">
       <h2>Document</h2>
       <div id="raloud-recent"></div>
+      <div class="raloud-row" style="margin:0 0 8px">
+        <button id="raloud-manage" type="button" class="raloud-linkbtn">Manage all documents…</button>
+      </div>
       <input type="text" id="raloud-name" placeholder="Document name (auto from first heading)" style="margin-bottom:8px" spellcheck="false" />
       <textarea id="raloud-src" spellcheck="false" placeholder="Paste markdown here…"></textarea>
       <div class="raloud-row" style="margin-top:12px">
@@ -41,6 +44,21 @@
       <div class="err" id="raloud-err"></div>
     </div>`;
   document.body.appendChild(editor);
+
+  const manager = document.createElement('div');
+  manager.className = 'raloud-ov';
+  manager.hidden = true;
+  manager.innerHTML = `
+    <div class="raloud-card">
+      <h2>Library</h2>
+      <div id="raloud-manage-list"></div>
+      <div class="raloud-hint">Files live in <span id="raloud-libdir">data/library</span> as plain .md — safe to copy or back up.</div>
+      <div class="raloud-row" style="margin-top:14px"><span style="flex:1"></span>
+        <button id="raloud-manage-close" type="button" class="primary">Close</button>
+      </div>
+      <div class="err" id="raloud-manage-err"></div>
+    </div>`;
+  document.body.appendChild(manager);
 
   const conf = document.createElement('div');
   conf.className = 'raloud-ov';
@@ -284,26 +302,7 @@
             <span class="d">${new Date(d.openedAt).toLocaleDateString()}</span>
             <button class="x" data-del="${d.id}" title="Delete file">×</button>
           </li>`).join('') + '</ul>';
-      box.querySelectorAll('.t').forEach((el) =>
-        (el.onclick = async () => {
-          const res = await fetch('/api/library/open', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ id: el.dataset.id }),
-          });
-          const body = await res.json();
-          if (!res.ok) return showBanner(body.message || 'could not open document');
-          currentDocId = body.id;
-          currentDocName = body.name;
-          st.settings.currentDocId = body.id;
-          st.settings.currentSource = body.source;
-          docLocale = body.locale;
-          $('raloud-name').value = body.name;
-          $('raloud-src').value = body.source;
-          editor.hidden = true;
-          hideBanner();
-          dispatch(buildLoad(body));
-        }));
+      box.querySelectorAll('.t').forEach((el) => (el.onclick = () => openById(el.dataset.id)));
       box.querySelectorAll('[data-del]').forEach((el) =>
         (el.onclick = async (e) => {
           e.stopPropagation();
@@ -323,6 +322,110 @@
       box.innerHTML = '';
     }
   }
+
+  // ---- library manager ------------------------------------------------------
+  const humanBytes = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+
+  async function renderManager() {
+    const box = $('raloud-manage-list');
+    try {
+      const { docs } = await fetch('/api/library').then((r) => r.json());
+      if (!docs.length) {
+        box.innerHTML = '<p class="raloud-hint">No documents yet — paste markdown and Render & read, or Save.</p>';
+        return;
+      }
+      box.innerHTML = '<table><thead><tr><th>Name</th><th>Modified</th><th>Size</th><th></th></tr></thead><tbody>' +
+        docs.map((d) => `
+          <tr data-id="${d.id}">
+            <td class="nm" title="Click to open and read">${d.name.replace(/</g, '&lt;')}${d.id === currentDocId ? '<div class="cur">currently open</div>' : ''}</td>
+            <td>${new Date(d.openedAt).toLocaleString()}</td>
+            <td>${humanBytes(d.bytes || 0)}</td>
+            <td class="ops">
+              <a href="/api/library/file/${d.id}" download="${d.file.replace(/"/g, '')}"><button type="button" title="Download .md">↓</button></a>
+              <button type="button" data-ren="${d.id}" data-name="${d.name.replace(/"/g, '&quot;')}" title="Rename">✎</button>
+              <button type="button" data-del="${d.id}" title="Delete">×</button>
+            </td>
+          </tr>`).join('') + '</tbody></table>';
+
+      box.querySelectorAll('.nm').forEach((el) =>
+        (el.onclick = () => openById(el.parentElement.dataset.id)));
+      box.querySelectorAll('[data-ren]').forEach((el) =>
+        (el.onclick = () => {
+          const td = el.closest('tr').querySelector('.nm');
+          td.innerHTML = `<input value="${el.dataset.name.replace(/"/g, '&quot;')}" />`;
+          const input = td.querySelector('input');
+          input.focus();
+          input.select();
+          const commit = async () => {
+            const name = input.value.trim();
+            if (name && name !== el.dataset.name) {
+              const res = await fetch('/api/library/rename', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ id: el.dataset.id, name }),
+              });
+              const body = await res.json();
+              if (!res.ok) {
+                $('raloud-manage-err').textContent = body.message || 'rename failed';
+                return renderManager();
+              }
+              if (el.dataset.id === currentDocId) {
+                currentDocName = body.doc.name;
+                if (editor.hidden === false) $('raloud-name').value = body.doc.name;
+              }
+            }
+            renderManager();
+          };
+          input.onkeydown = (e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') renderManager();
+          };
+          input.onblur = commit;
+        }));
+      box.querySelectorAll('[data-del]').forEach((el) =>
+        (el.onclick = async () => {
+          const res = await fetch('/api/library/' + el.dataset.del, { method: 'DELETE' });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            $('raloud-manage-err').textContent = body.message || 'delete failed';
+          }
+          if (el.dataset.del === currentDocId) {
+            currentDocId = null;
+            currentDocName = '';
+            st.settings.currentDocId = null;
+          }
+          renderManager();
+          renderRecent();
+        }));
+    } catch (err) {
+      box.innerHTML = `<p class="raloud-hint">could not load library: ${String(err?.message || err)}</p>`;
+    }
+  }
+
+  /** Fetch + open a library document, shared by the modal list and the manager. */
+  async function openById(id) {
+    const res = await fetch('/api/library/open', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const body = await res.json();
+    if (!res.ok) return showBanner(body.message || 'could not open document');
+    currentDocId = body.id;
+    currentDocName = body.name;
+    st.settings.currentDocId = body.id;
+    st.settings.currentSource = body.source;
+    docLocale = body.locale;
+    $('raloud-name').value = body.name;
+    $('raloud-src').value = body.source;
+    manager.hidden = true;
+    editor.hidden = true;
+    hideBanner();
+    dispatch(buildLoad(body));
+  }
+
+  $('raloud-manage').onclick = () => { editor.hidden = true; renderManager(); manager.hidden = false; };
+  $('raloud-manage-close').onclick = () => { manager.hidden = true; openEditor(); };
 
   function openEditor() {
     $('raloud-name').value = currentDocName;

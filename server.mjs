@@ -320,18 +320,27 @@ for (const d of libraryIndex.docs) {
   delete d.title;
 }
 
+/** Rename a document: display name, filename, index. */
+function libraryRename(doc, name) {
+  const clean = name.trim().slice(0, 80);
+  if (!clean || clean === doc.name) return doc;
+  doc.name = clean;
+  const file = `${slugify(doc.name)}-${doc.id}.md`;
+  if (file !== doc.file) {
+    fs.renameSync(path.join(LIBRARY_DIR, doc.file), path.join(LIBRARY_DIR, file));
+    doc.file = file;
+  }
+  saveLibraryIndex();
+  return doc;
+}
+
 /** Create or update a named document. Unknown/absent id creates a new file. */
 function librarySave({ id, name, source }) {
   const now = new Date().toISOString();
   let doc = id ? libraryIndex.docs.find((d) => d.id === id) : undefined;
   if (doc) {
     fs.writeFileSync(path.join(LIBRARY_DIR, doc.file), source);
-    if (name && name.trim() && name.trim() !== doc.name) {
-      doc.name = name.trim().slice(0, 80);
-      const file = `${slugify(doc.name)}-${doc.id}.md`;
-      fs.renameSync(path.join(LIBRARY_DIR, doc.file), path.join(LIBRARY_DIR, file));
-      doc.file = file;
-    }
+    doc = libraryRename(doc, name || doc.name);
     doc.openedAt = now;
     libraryIndex.docs = [doc, ...libraryIndex.docs.filter((d) => d !== doc)];
   } else {
@@ -376,7 +385,37 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && u.pathname === '/api/library') {
-      return json(res, 200, { docs: libraryIndex.docs });
+      const docs = libraryIndex.docs.map((d) => {
+        let bytes = 0;
+        try {
+          bytes = fs.statSync(path.join(LIBRARY_DIR, d.file)).size;
+        } catch {
+          /* missing file shows as 0 */
+        }
+        return { ...d, bytes };
+      });
+      return json(res, 200, { docs });
+    }
+
+    if (req.method === 'POST' && u.pathname === '/api/library/rename') {
+      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
+      const hit = libraryGet(String(body.id ?? ''));
+      if (!hit) return json(res, 404, { message: 'document not found' });
+      const doc = libraryRename(hit.doc, String(body.name ?? ''));
+      if (settings.currentDocId === doc.id) save(); // keep the pointer consistent
+      return json(res, 200, { doc });
+    }
+
+    if (req.method === 'GET' && u.pathname.startsWith('/api/library/file/')) {
+      const hit = libraryGet(u.pathname.slice('/api/library/file/'.length));
+      if (!hit) return json(res, 404, { message: 'document not found' });
+      const data = Buffer.from(hit.source, 'utf8');
+      res.writeHead(200, {
+        'content-type': 'text/markdown; charset=utf-8',
+        'content-length': data.length,
+        'content-disposition': `attachment; filename="${hit.doc.file.replace(/"/g, '')}"`,
+      });
+      return res.end(data);
     }
 
     if (req.method === 'POST' && u.pathname === '/api/library') {
