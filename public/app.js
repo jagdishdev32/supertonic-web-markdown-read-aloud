@@ -25,13 +25,16 @@
   editor.hidden = true;
   editor.innerHTML = `
     <div class="raloud-card">
-      <h2>Paste markdown to read aloud</h2>
+      <h2>Document</h2>
       <div id="raloud-recent"></div>
+      <input type="text" id="raloud-name" placeholder="Document name (auto from first heading)" style="margin-bottom:8px" spellcheck="false" />
       <textarea id="raloud-src" spellcheck="false" placeholder="Paste markdown here…"></textarea>
       <div class="raloud-row" style="margin-top:12px">
+        <button id="raloud-new" type="button" title="Start a new document">New</button>
         <button id="raloud-clip" type="button">Paste from clipboard</button>
         <span style="flex:1"></span>
         <button id="raloud-cancel" type="button">Cancel</button>
+        <button id="raloud-save" type="button">Save</button>
         <button id="raloud-go" type="button" class="primary">Render &amp; read</button>
       </div>
       <div class="raloud-hint">Ctrl+Shift+V opens this · everything stays on this machine</div>
@@ -240,20 +243,46 @@
   }
 
   // ---- editor + settings modals --------------------------------------------
+  let currentDocId = st.settings.currentDocId || null;
+  let currentDocName = '';
+
+  async function saveDoc(source) {
+    const res = await fetch('/api/library', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source, id: currentDocId, name: $('raloud-name').value }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.message || 'HTTP ' + res.status);
+    currentDocId = body.doc.id;
+    currentDocName = body.doc.name;
+    st.settings.currentDocId = currentDocId;
+    st.settings.currentSource = source;
+    renderRecent();
+    return body.doc;
+  }
+
   async function renderRecent() {
     const box = $('raloud-recent');
     try {
       const { docs } = await fetch('/api/library').then((r) => r.json());
+      if (currentDocId && !currentDocName) {
+        const mine = docs.find((d) => d.id === currentDocId);
+        if (mine) {
+          currentDocName = mine.name;
+          if (!$('raloud-name').value) $('raloud-name').value = mine.name;
+        }
+      }
       if (!docs.length) {
         box.innerHTML = '';
         return;
       }
-      box.innerHTML = '<h3>Recent documents</h3><ul>' +
+      box.innerHTML = '<h3>Documents</h3><ul>' +
         docs.map((d) => `
           <li>
-            <span class="t" data-id="${d.id}" title="${d.title.replace(/"/g, '&quot;')}">${d.title}</span>
+            <span class="t" data-id="${d.id}" title="${d.name.replace(/"/g, '&quot;')}">${d.name}${d.id === currentDocId ? ' ●' : ''}</span>
             <span class="d">${new Date(d.openedAt).toLocaleDateString()}</span>
-            <button class="x" data-del="${d.id}" title="Remove from library">×</button>
+            <button class="x" data-del="${d.id}" title="Delete file">×</button>
           </li>`).join('') + '</ul>';
       box.querySelectorAll('.t').forEach((el) =>
         (el.onclick = async () => {
@@ -264,8 +293,13 @@
           });
           const body = await res.json();
           if (!res.ok) return showBanner(body.message || 'could not open document');
+          currentDocId = body.id;
+          currentDocName = body.name;
+          st.settings.currentDocId = body.id;
           st.settings.currentSource = body.source;
           docLocale = body.locale;
+          $('raloud-name').value = body.name;
+          $('raloud-src').value = body.source;
           editor.hidden = true;
           hideBanner();
           dispatch(buildLoad(body));
@@ -273,7 +307,16 @@
       box.querySelectorAll('[data-del]').forEach((el) =>
         (el.onclick = async (e) => {
           e.stopPropagation();
-          await fetch('/api/library/' + el.dataset.del, { method: 'DELETE' });
+          const res = await fetch('/api/library/' + el.dataset.del, { method: 'DELETE' });
+          if (el.dataset.del === currentDocId) {
+            currentDocId = null;
+            currentDocName = '';
+            $('raloud-name').value = '';
+          }
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showBanner(body.message || 'could not delete');
+          }
           renderRecent();
         }));
     } catch {
@@ -282,8 +325,10 @@
   }
 
   function openEditor() {
+    $('raloud-name').value = currentDocName;
     $('raloud-src').value = st.settings.currentSource || '';
     $('raloud-err').textContent = '';
+    $('raloud-err').className = 'err';
     renderRecent();
     editor.hidden = false;
     $('raloud-src').focus();
@@ -298,6 +343,34 @@
       $('raloud-err').textContent = 'Clipboard read blocked — paste into the box with Ctrl+V instead.';
     }
   };
+  $('raloud-new').onclick = () => {
+    currentDocId = null;
+    currentDocName = '';
+    st.settings.currentDocId = null;
+    $('raloud-name').value = '';
+    $('raloud-src').value = '';
+    $('raloud-err').textContent = '';
+    renderRecent();
+    $('raloud-src').focus();
+  };
+  $('raloud-save').onclick = async () => {
+    const source = $('raloud-src').value;
+    if (!source.trim()) {
+      $('raloud-err').textContent = 'Nothing to save yet — paste some markdown first.';
+      return;
+    }
+    $('raloud-save').disabled = true;
+    try {
+      const doc = await saveDoc(source);
+      $('raloud-err').className = 'raloud-ok';
+      $('raloud-err').textContent = `Saved "${doc.name}" (${doc.file})`;
+    } catch (err) {
+      $('raloud-err').className = 'err';
+      $('raloud-err').textContent = String(err?.message || err);
+    } finally {
+      $('raloud-save').disabled = false;
+    }
+  };
   $('raloud-go').onclick = async () => {
     const source = $('raloud-src').value;
     if (!source.trim()) {
@@ -309,8 +382,8 @@
       const [rendered] = await Promise.all([
         fetch('/api/render', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source }) }).then((r) => r.json().then((b) => ({ ok: r.ok, b }))),
         postSettings({ currentSource: source }).catch(() => undefined),
-        // save to the library (best-effort; the list refreshes on next open)
-        fetch('/api/library', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ source }) }).catch(() => undefined),
+        // persist to the library under its name (in place when editing an open doc)
+        saveDoc(source).catch(() => undefined),
       ]);
       if (!rendered.ok) throw new Error(rendered.b.message || 'render failed');
       docLocale = rendered.b.locale;

@@ -43,6 +43,7 @@ const DEFAULTS = {
   readerSettings: { codeBlocks: 'announce', tables: 'skip', announceHeadings: false, highlight: true },
   readerPrefs: null,
   currentSource: '',
+  currentDocId: null, // which library file is open (stable 12-hex id)
 };
 
 let settings = { ...DEFAULTS };
@@ -145,6 +146,7 @@ function snapshot() {
       readerSettings: settings.readerSettings,
       readerPrefs: settings.readerPrefs,
       currentSource: settings.currentSource,
+      currentDocId: settings.currentDocId,
     },
     voiceUi: voiceUi(),
   };
@@ -220,6 +222,9 @@ function applySettings(patch) {
     settings[key] = patch[key];
   }
   if (patch.currentSource !== undefined) settings.currentSource = String(patch.currentSource).slice(0, MAX_BODY);
+  if (patch.currentDocId !== undefined) {
+    settings.currentDocId = patch.currentDocId && /^[0-9a-f]{12}$/.test(patch.currentDocId) ? patch.currentDocId : null;
+  }
   save();
   return null;
 }
@@ -283,7 +288,9 @@ function sentenceGapMs() {
   return Math.round(gap * mult);
 }
 
-// ---- document library: one .md file per pasted document + a JSON index ----
+// ---- document library: named .md files, editable in place ----
+// One .md file per document (stable 12-hex id), plus a JSON index. Saving an
+// open document overwrites its file; renaming renames the file too.
 
 let libraryIndex = { docs: [] };
 try {
@@ -296,7 +303,9 @@ const saveLibraryIndex = () => {
   fs.writeFileSync(LIBRARY_INDEX, JSON.stringify(libraryIndex, null, 2));
 };
 
-/** Title for the list/filename: first heading, else first non-blank line. */
+const slugify = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'doc';
+
+/** Default name: first heading, else first non-blank line. */
 function deriveTitle(source) {
   const line =
     /^#{1,6}\s+(.+)$/m.exec(source)?.[1] ??
@@ -305,18 +314,30 @@ function deriveTitle(source) {
   return (line || 'Pasted ' + new Date().toISOString().slice(0, 10)).slice(0, 80).trim();
 }
 
-/** Save a document (content-addressed: re-pasting the same text updates its timestamp). */
-function libraryAdd(source) {
-  const id = crypto.createHash('sha1').update(source).digest('hex').slice(0, 12);
+// old content-addressed entries carried `title`; treat it as the name
+for (const d of libraryIndex.docs) {
+  if (d.name === undefined) d.name = d.title ?? 'Untitled';
+  delete d.title;
+}
+
+/** Create or update a named document. Unknown/absent id creates a new file. */
+function librarySave({ id, name, source }) {
   const now = new Date().toISOString();
-  let doc = libraryIndex.docs.find((d) => d.id === id);
+  let doc = id ? libraryIndex.docs.find((d) => d.id === id) : undefined;
   if (doc) {
+    fs.writeFileSync(path.join(LIBRARY_DIR, doc.file), source);
+    if (name && name.trim() && name.trim() !== doc.name) {
+      doc.name = name.trim().slice(0, 80);
+      const file = `${slugify(doc.name)}-${doc.id}.md`;
+      fs.renameSync(path.join(LIBRARY_DIR, doc.file), path.join(LIBRARY_DIR, file));
+      doc.file = file;
+    }
     doc.openedAt = now;
     libraryIndex.docs = [doc, ...libraryIndex.docs.filter((d) => d !== doc)];
   } else {
-    const title = deriveTitle(source);
-    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'doc';
-    doc = { id, file: `${slug}-${id}.md`, title, addedAt: now, openedAt: now };
+    const finalName = (name || '').trim().slice(0, 80) || deriveTitle(source);
+    doc = { id: crypto.randomBytes(6).toString('hex'), file: '', name: finalName, addedAt: now, openedAt: now };
+    doc.file = `${slugify(doc.name)}-${doc.id}.md`;
     fs.mkdirSync(LIBRARY_DIR, { recursive: true });
     fs.writeFileSync(path.join(LIBRARY_DIR, doc.file), source);
     libraryIndex.docs.unshift(doc);
@@ -362,22 +383,28 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const source = String(body.source ?? '');
       if (!source.trim()) return json(res, 422, { message: 'empty document' });
-      return json(res, 200, { doc: libraryAdd(source) });
+      const doc = librarySave({ id: body.id, name: body.name, source });
+      // saving a document makes it the one you're working on
+      settings.currentDocId = doc.id;
+      save();
+      return json(res, 200, { doc });
     }
 
     if (req.method === 'POST' && u.pathname === '/api/library/open') {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const hit = libraryGet(String(body.id ?? ''));
       if (!hit) return json(res, 404, { message: 'document not found' });
-      // opening = the render path plus remembering it as the current document
       settings.currentSource = hit.source;
+      settings.currentDocId = hit.doc.id;
       save();
       const locale = host.detectLocale(hit.source, settings.fallbackLocale).locale;
       activeLocale = locale;
       return json(res, 200, {
         html: host.renderMarkdownHtml(hit.source),
         locale,
-        title: hit.doc.title,
+        title: hit.doc.name,
+        id: hit.doc.id,
+        name: hit.doc.name,
         source: hit.source,
       });
     }
@@ -388,6 +415,10 @@ const server = http.createServer(async (req, res) => {
       if (!hit) return json(res, 404, { message: 'document not found' });
       fs.rmSync(path.join(LIBRARY_DIR, hit.doc.file), { force: true });
       libraryIndex.docs = libraryIndex.docs.filter((d) => d.id !== id);
+      if (settings.currentDocId === id) {
+        settings.currentDocId = null; // the file you had open is gone
+        save();
+      }
       saveLibraryIndex();
       return json(res, 200, { ok: true });
     }

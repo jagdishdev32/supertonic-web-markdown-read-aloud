@@ -45,9 +45,10 @@ google-chrome --app=http://127.0.0.1:7789   # or chromium --app=…
 ## Use
 
 - Paste box opens on start (✎ button or Ctrl+Shift+V) → paste Markdown →
-  **Render & read**. Every document is saved to the **library** (plain `.md`
-  files in `data/library/`); the ✎ modal lists recent documents — click to
-  reopen, × to remove. Re-pasting identical text reuses the same entry.
+  **Render & read**. Documents are stored as **named `.md` files** in
+  `data/library/`: the ✎ modal lists them — click to switch, edit the name to
+  rename the file, **Save** to write in place, **New** to start fresh. The
+  open document is remembered across restarts.
 - Right-click ✎ (or Ctrl+,) → app settings: engine (Supertonic / Edge /
   system voices), Supertonic endpoint, voice overrides.
 - Supertonic voice styles are `F1–F5` / `M1–M5`, e.g. `{"de-DE": "F2"}`;
