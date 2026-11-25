@@ -52,11 +52,14 @@
       <label>Voice overrides (JSON, per language)</label>
       <textarea id="raloud-overrides" style="min-height:110px" spellcheck="false"></textarea>
       <div class="raloud-hint">Edge voices: {"de-DE":"de-DE-KatjaNeural"} · Supertonic styles: {"de-DE":"F2"} (F1–F5 / M1–M5)</div>
-      <label style="font-weight:400;display:flex;gap:8px;align-items:center;margin-top:12px">
-        <input type="checkbox" id="raloud-smartpauses" />
-        Smart pauses between sentences (Supertonic)
-      </label>
-      <div class="raloud-hint">Adds a sentence gap scaled by 1/√speed — ~350 ms at 1×, ~250 ms at 2×, ~220 ms at 2.5× — so speeding up doesn't squash the pauses that keep fast speech intelligible.</div>
+      <label>Pauses between sentences (Supertonic)</label>
+      <div class="raloud-row" id="raloud-pausemodes"></div>
+      <div class="raloud-row" style="margin-top:8px">
+        <span style="font-weight:600">Pause multiplier</span>
+        <input type="number" id="raloud-pausemult" min="0.5" max="1.5" step="0.1" style="width:90px" />
+        <span class="raloud-hint" style="margin:0">× the added gap — A/B by ear (try 0.7 / 1 / 1.3)</span>
+      </div>
+      <div class="raloud-hint">Off = no added gaps · Compact = original, gap shrinks with speed (350 ms/√speed) · Research = boundary-restoring, gap grows with speed (~600/700/800/900 ms total at 1/1.5/2/2.5×). Sentence boundaries only; the model's own comma prosody is untouched.</div>
       <div class="raloud-row" style="margin-top:14px">
         <span style="flex:1"></span>
         <button id="raloud-conf-cancel" type="button">Cancel</button>
@@ -283,7 +286,11 @@
       .join('');
     $('raloud-endpoint').value = st.settings.supertonicEndpoint;
     $('raloud-overrides').value = JSON.stringify(st.settings.voiceOverrides || {}, null, 2);
-    $('raloud-smartpauses').checked = !!st.settings.smartPauses;
+    const modes = [['off', 'Off'], ['compact', 'Compact (original)'], ['research', 'Research']];
+    $('raloud-pausemodes').innerHTML = modes
+      .map(([v, label]) => `<label style="font-weight:400;display:flex;gap:6px;align-items:center;margin:2px 0"><input type="radio" name="raloud-pausemode" value="${v}" ${(st.settings.pauseMode || 'off') === v ? 'checked' : ''}/>${label}</label>`)
+      .join('');
+    $('raloud-pausemult').value = st.settings.pauseMultiplier ?? 1;
     $('raloud-conf-err').textContent = '';
     conf.hidden = false;
   }
@@ -306,7 +313,8 @@
       engine: (conf.querySelector('input[name=raloud-engine]:checked') || {}).value,
       supertonicEndpoint: $('raloud-endpoint').value.trim(),
       voiceOverrides: overrides,
-      smartPauses: $('raloud-smartpauses').checked,
+      pauseMode: (conf.querySelector('input[name=raloud-pausemode]:checked') || {}).value || 'off',
+      pauseMultiplier: Number($('raloud-pausemult').value) || 1,
     };
     $('raloud-conf-save').disabled = true;
     try {

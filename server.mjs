@@ -32,7 +32,9 @@ const DEFAULTS = {
   fallbackLocale: FALLBACK_LOCALE,
   rate: 1,
   volume: 1,
-  smartPauses: false, // sentence gaps scaled by 1/sqrt(speed) — Supertonic WAV only
+  smartPauses: false, // legacy: pre-2026-11-26 boolean, migrated to pauseMode
+  pauseMode: 'off', // 'off' | 'compact' (gap shrinks by 1/sqrt(speed)) | 'research' (gap grows per boundary-restoration table)
+  pauseMultiplier: 1, // user tuning for the added gap (A/B by ear; 0.7–1.5)
   voiceOverrides: {},
   pronunciations: {},
   readerSettings: { codeBlocks: 'announce', tables: 'skip', announceHeadings: false, highlight: true },
@@ -49,6 +51,11 @@ try {
 // env wins over the stored setting (docker compose points us at the bundled
 // supertonic service, or at a server on the host via host.docker.internal)
 if (process.env.SUPERTONIC_ENDPOINT) settings.supertonicEndpoint = process.env.SUPERTONIC_ENDPOINT;
+// migrate the original smartPauses boolean → pauseMode ('compact' = the old √-shrink)
+if (typeof settings.smartPauses === 'boolean') {
+  if (!settings.pauseMode || settings.pauseMode === 'off') settings.pauseMode = settings.smartPauses ? 'compact' : 'off';
+  delete settings.smartPauses;
+}
 const save = () => fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
 
 // Session-only active language, like PlayerPanel.activeLocale: seeded from the
@@ -129,7 +136,8 @@ function snapshot() {
       autoLang: settings.autoLang,
       rate: settings.rate,
       volume: settings.volume,
-      smartPauses: settings.smartPauses,
+      pauseMode: settings.pauseMode,
+      pauseMultiplier: settings.pauseMultiplier,
       voiceOverrides: settings.voiceOverrides,
       readerSettings: settings.readerSettings,
       readerPrefs: settings.readerPrefs,
@@ -185,7 +193,16 @@ function applySettings(patch) {
   if (patch.locale !== undefined && typeof patch.locale === 'string' && patch.locale) activeLocale = patch.locale;
   if (patch.rate !== undefined && Number.isFinite(patch.rate)) settings.rate = Math.min(2.5, Math.max(0.5, patch.rate));
   if (patch.volume !== undefined && Number.isFinite(patch.volume)) settings.volume = Math.min(1, Math.max(0, patch.volume));
-  if (patch.smartPauses !== undefined) settings.smartPauses = !!patch.smartPauses;
+  if (patch.smartPauses !== undefined) {
+    // legacy boolean still accepted: true keeps the old compact behavior
+    settings.pauseMode = patch.smartPauses ? (settings.pauseMode === 'off' ? 'compact' : settings.pauseMode) : 'off';
+  }
+  if (patch.pauseMode !== undefined) {
+    settings.pauseMode = ['off', 'compact', 'research'].includes(patch.pauseMode) ? patch.pauseMode : settings.pauseMode;
+  }
+  if (patch.pauseMultiplier !== undefined && Number.isFinite(patch.pauseMultiplier)) {
+    settings.pauseMultiplier = Math.min(1.5, Math.max(0.5, patch.pauseMultiplier));
+  }
   if (patch.readerSettings !== undefined && typeof patch.readerSettings === 'object') {
     settings.readerSettings = { ...settings.readerSettings, ...patch.readerSettings };
   }
@@ -250,6 +267,19 @@ function appendWavSilence(buf, ms) {
   return out;
 }
 
+/** Added sentence-end gap (ms) for the current mode and speed. The model's own
+ *  trailing silence (~250 ms) is part of the perceived pause: research-mode
+ *  totals (350 + 200·(rate−1) + trailing) track the boundary-restoration table
+ *  (600/700/800/900 ms at 1/1.5/2/2.5×); compact keeps the old 1/√speed shrink. */
+function sentenceGapMs() {
+  const rate = Math.min(2.5, Math.max(0.5, settings.rate));
+  const mult = Math.min(1.5, Math.max(0.5, settings.pauseMultiplier || 1));
+  let gap = 0;
+  if (settings.pauseMode === 'compact') gap = 350 / Math.sqrt(rate);
+  else if (settings.pauseMode === 'research') gap = 350 + 200 * (rate - 1);
+  return Math.round(gap * mult);
+}
+
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://${HOST}:${PORT}`);
   try {
@@ -306,12 +336,9 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         let buf = await engine.synth(clean, voice, locale);
-        if (settings.engine === 'supertonic' && settings.smartPauses) {
-          // Listening-ergonomics rule: sentence gaps scale by 1/sqrt(speed), not
-          // 1/speed — fast speech stays intelligible only if pauses survive.
-          // Base 350 ms + the model's own trailing silence ≈ the ~600 ms
-          // sentence-end target at 1×. Edge clips are mp3 — skipped there.
-          buf = appendWavSilence(buf, 350 / Math.sqrt(settings.rate));
+        if (settings.engine === 'supertonic') {
+          // Boundary-aware sentence gaps; Edge clips are mp3 — skipped there.
+          buf = appendWavSilence(buf, sentenceGapMs());
         }
         console.log(`[synth] ${settings.engine} ${locale} ${voice} ${clean.length} chars → ${buf.length} bytes`);
         res.writeHead(200, {
