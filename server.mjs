@@ -374,6 +374,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && (u.pathname === '/' || u.pathname === '/index.html')) {
       return serveFile(res, path.join(PUBLIC, 'index.html'));
     }
+    if (req.method === 'GET' && (u.pathname === '/library' || u.pathname === '/library.html')) {
+      return serveFile(res, path.join(PUBLIC, 'library.html'));
+    }
     if (req.method === 'GET' && u.pathname.startsWith('/media/')) {
       const rel = path.normalize(u.pathname.slice('/media/'.length)).replace(/^(\.\.[/\\])+/, '');
       const file = path.join(MEDIA, rel);

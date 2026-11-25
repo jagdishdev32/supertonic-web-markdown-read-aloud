@@ -51,6 +51,9 @@ google-chrome --app=http://127.0.0.1:7789   # or chromium --app=…
   open document is remembered across restarts.
 - Right-click ✎ (or Ctrl+,) → app settings: engine (Supertonic / Edge /
   system voices), Supertonic endpoint, voice overrides.
+- **Dashboard**: [`/library`](http://127.0.0.1:7789/library) — all documents
+  with sizes and dates, search, and open / rename / download / delete. Also
+  linked from the ✎ modal ("Manage all documents…").
 - Supertonic voice styles are `F1–F5` / `M1–M5`, e.g. `{"de-DE": "F2"}`;
   Edge names in the same map are ignored in Supertonic mode and vice versa.
 - Speed, volume, gender, language live in the reader UI itself.

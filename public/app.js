@@ -51,6 +51,7 @@
   manager.innerHTML = `
     <div class="raloud-card">
       <h2>Library</h2>
+      <div class="raloud-row"><a class="raloud-linkbtn" href="/library" target="_blank" rel="noopener">Open full dashboard ↗</a></div>
       <div id="raloud-manage-list"></div>
       <div class="raloud-hint">Files live in <span id="raloud-libdir">data/library</span> as plain .md — safe to copy or back up.</div>
       <div class="raloud-row" style="margin-top:14px"><span style="flex:1"></span>
